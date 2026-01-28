@@ -12,6 +12,7 @@
         .gen{background:#4da6ff;color:#fff}
         .share{background:#6f42c1;color:#fff}
         .start{background:#28a745;color:#fff}
+        .pause{background:#ff9800;color:#fff} /* Couleur Orange pour la pause */
         .stop{background:#dc3545;color:#fff}
         .toggle-trace{background:#555;color:#fff}
         .trace-on{background:#007bff;box-shadow: 0 0 10px #007bff}
@@ -34,6 +35,7 @@
     <div id="controls" style="display:none;">
         <button class="share" onclick="shareLink()">📤 2. Partager</button>
         <button class="start" id="btnStart" onclick="startTracking()">▶ 3. Démarrer le direct</button>
+        <button class="pause" id="btnPause" style="display:none;" onclick="togglePause()">⏸ Pause</button>
         <button class="toggle-trace trace-on" id="btnTrace" onclick="toggleTrace()">Tracé : ON</button>
     </div>
     
@@ -49,6 +51,7 @@
     <script>
         let peer = null, conn = null, timerId = null;
         let showTrace = true;
+        let isPaused = false;
         let map = L.map('map').setView([46.6, 2.2], 5);
         let marker = L.marker([0, 0]).addTo(map);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
@@ -65,42 +68,47 @@
             btn.classList.toggle('trace-on', showTrace);
         }
 
+        function togglePause() {
+            isPaused = !isPaused;
+            const btn = document.getElementById('btnPause');
+            if (isPaused) {
+                btn.innerText = "▶ Reprendre";
+                document.getElementById('status').innerText = "⏸ En pause...";
+            } else {
+                btn.innerText = "⏸ Pause";
+                document.getElementById('status').innerText = "📡 Envoi en cours...";
+            }
+        }
+
         function generateLink() {
             const name = document.getElementById('customId').value.trim();
             if (!name) return alert("Choisis un nom !");
-            
             localStorage.setItem('p2p_session_name', name);
-            if(peer) peer.destroy(); // On nettoie si une session existe déjà
-            
+            if(peer) peer.destroy();
             peer = new Peer(name);
-
             peer.on('open', (id) => {
                 const basePath = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
                 const shareUrl = window.location.origin + basePath + "view.html?id=" + id;
-                
                 document.getElementById('link').innerText = shareUrl;
                 document.getElementById('link').href = shareUrl;
                 document.getElementById('linkBox').style.display = "block";
-                
-                // On affiche tout le bloc de contrôle d'un coup
                 document.getElementById('controls').style.display = "block";
                 document.getElementById('status').innerText = "Session '" + id + "' active.";
             });
-
             peer.on('connection', (c) => { 
                 conn = c; 
                 document.getElementById('status').innerText = "Quelqu'un regarde !"; 
-            });
-
-            peer.on('error', (err) => {
-                if (err.type === 'unavailable-id') alert("Ce nom est déjà pris.");
-                console.error(err);
             });
         }
 
         function startTracking() {
             if (timerId) return;
+            document.getElementById('btnPause').style.display = "block";
+            document.getElementById('btnStart').style.display = "none";
+            
             timerId = setInterval(() => {
+                if (isPaused) return; // On ne fait rien si on est en pause
+
                 navigator.geolocation.getCurrentPosition(pos => {
                     const { latitude: lat, longitude: lon, speed } = pos.coords;
                     const kmh = speed ? Math.round(speed * 3.6) : 0;
@@ -117,8 +125,6 @@
                 }, null, { enableHighAccuracy: true });
             }, 2000);
             document.getElementById('status').innerText = "📡 Envoi en cours...";
-            document.getElementById('btnStart').style.opacity = "0.5";
-            document.getElementById('btnStart').innerText = "DIRECT ACTIF";
         }
 
         function stopSession() {
@@ -128,11 +134,7 @@
 
         async function shareLink() {
             const link = document.getElementById("link").href;
-            if (navigator.share) {
-                await navigator.share({ title: 'Suis-moi en direct', url: link });
-            } else {
-                alert("Lien : " + link);
-            }
+            if (navigator.share) await navigator.share({ title: 'Suis-moi', url: link });
         }
     </script>
 </body>
