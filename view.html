@@ -47,11 +47,21 @@
                 const conn = peer.connect(hostId);
                 conn.on('open', () => { statusText.innerText = "Connecté !"; });
                 conn.on('data', (data) => {
+                    // Si on reçoit l'ordre d'effacer le tracé
+                    if (data.command === "clearTrace") {
+                        polyline.setLatLngs([]); // On vide la ligne
+                        return;
+                    }
+
                     const pos = [data.lat, data.lon];
                     marker.setLatLng(pos);
+                    
                     if (data.showTrace !== false) {
                         polyline.addLatLng(pos);
+                    } else {
+                        polyline.setLatLngs([]); // Sécurité supplémentaire : si désactivé, on vide
                     }
+                    
                     speedDisplay.style.display = "block";
                     speedVal.innerText = data.speed || 0;
                     if (!userInteracting) {
