@@ -8,33 +8,36 @@
     <style>
         body{margin:0;padding:0;background:#111;font-family:sans-serif}
         #map{height:100vh;width:100%}
-        .legend{position:fixed;top:10px;left:10px;z-index:1000;background:rgba(0,0,0,0.85);color:#fff;padding:12px;border-radius:8px;font-size:12px;border:1px solid #4da6ff;max-height:200px;overflow-y:auto}
-        .bus-item{margin-bottom:5px;display:flex;align-items:center}
-        .color-dot{width:10px;height:10px;border-radius:50%;margin-right:8px}
+        .legend{position:fixed;top:10px;left:10px;z-index:1000;background:rgba(0,0,0,0.85);color:#fff;padding:12px;border-radius:8px;font-size:12px;border:1px solid #4da6ff;max-height:200px;overflow-y:auto;pointer-events: auto;}
+        .bus-item{margin-bottom:8px;display:flex;align-items:center}
+        .color-dot{width:12px;height:12px;border-radius:50%;margin-right:8px;border:1px solid #fff}
+        .speed-text{color:#4da6ff; font-weight:bold; margin-left:5px}
     </style>
 </head>
 <body>
-    <div class="legend" id="legend"><b>🚌 Flotte en direct</b><br><br></div>
+    <div class="legend" id="legend"><b>🚌 Flotte en direct</b><hr></div>
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <script>
         const params = new URLSearchParams(window.location.search);
-        // On récupère "ids" (au pluriel) ou "id" (au singulier)
         const rawIds = params.get("ids") || params.get("id");
         const hostIds = rawIds ? rawIds.split(',') : [];
         
-        let map = L.map('map').setView([46.6, 2.2], 5);
+        // Zoom déplacé en bas à droite
+        let map = L.map('map', {zoomControl: false}).setView([46.6, 2.2], 5);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+        
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        const fleet = {}; // Objet pour stocker les données de chaque bus
-        const colors = ['cyan', 'lime', 'yellow', 'orange', 'magenta', 'red'];
+        const fleet = {};
+        const colors = ['#00FFFF', '#00FF00', '#FFFF00', '#FF8000', '#FF00FF', '#FF0000'];
 
-        function getBusUI(id, color) {
+        function createBusUI(id, color) {
             const div = document.createElement('div');
             div.className = 'bus-item';
-            div.innerHTML = `<div class="color-dot" style="background:${color}"></div> <span>${id}: </span><b id="speed-${id}">0</b> km/h`;
+            div.innerHTML = `<div class="color-dot" style="background:${color}"></div> <span>${id}: </span><span class="speed-text"><span id="speed-${id}">0</span> km/h</span>`;
             return div;
         }
 
@@ -42,44 +45,54 @@
 
         peer.on('open', () => {
             hostIds.forEach((id, index) => {
+                const busId = id.trim();
                 const color = colors[index % colors.length];
                 
-                // On crée le marqueur et la ligne pour ce bus
-                fleet[id] = {
-                    marker: L.marker([0, 0]).addTo(map).bindPopup("Bus: " + id),
-                    polyline: L.polyline([], {color: color, weight: 4}).addTo(map),
-                    conn: peer.connect(id.trim())
+                fleet[busId] = {
+                    marker: L.marker([0, 0]).addTo(map).bindPopup("<b>Bus: " + busId + "</b>"),
+                    polyline: L.polyline([], {color: color, weight: 4, opacity: 0.8}).addTo(map),
+                    conn: peer.connect(busId)
                 };
 
-                // On ajoute à la légende
-                document.getElementById('legend').appendChild(getBusUI(id, color));
+                document.getElementById('legend').appendChild(createBusUI(busId, color));
 
-                // Gestion des données reçues pour ce bus précis
-                fleet[id].conn.on('data', (data) => {
+                fleet[busId].conn.on('data', (data) => {
                     if (data.command === "clearTrace") {
-                        fleet[id].polyline.setLatLngs([]);
+                        fleet[busId].polyline.setLatLngs([]);
                         return;
                     }
 
                     const pos = [data.lat, data.lon];
-                    fleet[id].marker.setLatLng(pos);
+                    fleet[busId].marker.setLatLng(pos);
+                    
                     if (data.showTrace !== false) {
-                        fleet[id].polyline.addLatLng(pos);
+                        fleet[busId].polyline.addLatLng(pos);
+                    } else {
+                        fleet[busId].polyline.setLatLngs([]);
                     }
-                    document.getElementById(`speed-${id}`).innerText = data.speed || 0;
+                    
+                    const speedEl = document.getElementById(`speed-${busId}`);
+                    if (speedEl) speedEl.innerText = data.speed || 0;
+                });
+                
+                fleet[busId].conn.on('close', () => {
+                    console.log("Connexion perdue avec " + busId);
                 });
             });
         });
 
-        // Bouton pour recadrer la vue sur tout le monde
+        // Bouton loupe pour voir tout le monde
         L.Control.extend({
             onAdd: function() {
                 const btn = L.DomUtil.create('button', 'leaflet-bar');
                 btn.innerHTML = '🔍';
-                btn.style.padding = '5px';
+                btn.style.cssText = 'background:#fff; width:34px; height:34px; cursor:pointer; font-size:18px;';
                 btn.onclick = () => {
-                    const group = new L.featureGroup(Object.values(fleet).map(f => f.marker));
-                    if(group.getLayers().length > 0) map.fitBounds(group.getBounds());
+                    const layers = Object.values(fleet).map(f => f.marker).filter(m => m.getLatLng().lat !== 0);
+                    if(layers.length > 0) {
+                        const group = new L.featureGroup(layers);
+                        map.fitBounds(group.getBounds(), {padding: [50, 50]});
+                    }
                 };
                 return btn;
             },
