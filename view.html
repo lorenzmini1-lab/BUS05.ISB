@@ -2,81 +2,89 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>Suivi en direct</title>
+    <title>Centre de Contrôle - Flotte</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <style>
         body{margin:0;padding:0;background:#111;font-family:sans-serif}
         #map{height:100vh;width:100%}
-        .status{position:fixed;top:10px;left:10px;z-index:1000;background:rgba(0,0,0,0.85);color:#fff;padding:12px;border-radius:8px;font-size:12px;border:1px solid #4da6ff; min-width:150px}
-        .speed-val{display:block; font-size:20px; color:#4da6ff; font-weight:bold; margin-top:5px}
-        .dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; background: #28a745; box-shadow: 0 0 8px #28a745; }
+        .legend{position:fixed;top:10px;left:10px;z-index:1000;background:rgba(0,0,0,0.85);color:#fff;padding:12px;border-radius:8px;font-size:12px;border:1px solid #4da6ff;max-height:200px;overflow-y:auto}
+        .bus-item{margin-bottom:5px;display:flex;align-items:center}
+        .color-dot{width:10px;height:10px;border-radius:50%;margin-right:8px}
     </style>
 </head>
 <body>
-    <div class="status" id="status">
-        <span class="dot"></span> <span id="text">Connexion...</span>
-        <span id="speedDisplay" class="speed-val" style="display:none"><span id="speed">0</span> km/h</span>
-    </div>
+    <div class="legend" id="legend"><b>🚌 Flotte en direct</b><br><br></div>
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <script>
         const params = new URLSearchParams(window.location.search);
-        const hostId = params.get("id");
-        const statusText = document.getElementById("text");
-        const speedVal = document.getElementById("speed");
-        const speedDisplay = document.getElementById("speedDisplay");
+        // On récupère "ids" (au pluriel) ou "id" (au singulier)
+        const rawIds = params.get("ids") || params.get("id");
+        const hostIds = rawIds ? rawIds.split(',') : [];
         
-        let map = L.map('map', {zoomControl: false}).setView([0, 0], 2);
-        L.control.zoom({ position: 'bottomright' }).addTo(map);
-        let marker = L.marker([0, 0]).addTo(map);
-        let polyline = L.polyline([], {color:'cyan', weight: 4}).addTo(map);
+        let map = L.map('map').setView([46.6, 2.2], 5);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        let userInteracting = false;
-        let interactionTimer;
-        map.on('movestart', () => { userInteracting = true; clearTimeout(interactionTimer); });
-        map.on('moveend', () => { interactionTimer = setTimeout(() => { userInteracting = false; }, 5000); });
+        const fleet = {}; // Objet pour stocker les données de chaque bus
+        const colors = ['cyan', 'lime', 'yellow', 'orange', 'magenta', 'red'];
 
-        function connect() {
-            if (!hostId) return statusText.innerText = "❌ ID manquant";
-            const peer = new Peer();
-            peer.on('open', () => {
-                const conn = peer.connect(hostId);
-                conn.on('open', () => { statusText.innerText = "Connecté !"; });
-                conn.on('data', (data) => {
-                    // Si on reçoit l'ordre d'effacer le tracé
+        function getBusUI(id, color) {
+            const div = document.createElement('div');
+            div.className = 'bus-item';
+            div.innerHTML = `<div class="color-dot" style="background:${color}"></div> <span>${id}: </span><b id="speed-${id}">0</b> km/h`;
+            return div;
+        }
+
+        const peer = new Peer();
+
+        peer.on('open', () => {
+            hostIds.forEach((id, index) => {
+                const color = colors[index % colors.length];
+                
+                // On crée le marqueur et la ligne pour ce bus
+                fleet[id] = {
+                    marker: L.marker([0, 0]).addTo(map).bindPopup("Bus: " + id),
+                    polyline: L.polyline([], {color: color, weight: 4}).addTo(map),
+                    conn: peer.connect(id.trim())
+                };
+
+                // On ajoute à la légende
+                document.getElementById('legend').appendChild(getBusUI(id, color));
+
+                // Gestion des données reçues pour ce bus précis
+                fleet[id].conn.on('data', (data) => {
                     if (data.command === "clearTrace") {
-                        polyline.setLatLngs([]); // On vide la ligne
+                        fleet[id].polyline.setLatLngs([]);
                         return;
                     }
 
                     const pos = [data.lat, data.lon];
-                    marker.setLatLng(pos);
-                    
+                    fleet[id].marker.setLatLng(pos);
                     if (data.showTrace !== false) {
-                        polyline.addLatLng(pos);
-                    } else {
-                        polyline.setLatLngs([]); // Sécurité supplémentaire : si désactivé, on vide
+                        fleet[id].polyline.addLatLng(pos);
                     }
-                    
-                    speedDisplay.style.display = "block";
-                    speedVal.innerText = data.speed || 0;
-                    if (!userInteracting) {
-                        map.setView(pos, map.getZoom() < 10 ? 17 : map.getZoom());
-                    }
-                    statusText.innerText = "DIRECT - " + new Date(data.time).toLocaleTimeString();
-                });
-                conn.on('close', () => { 
-                    statusText.innerText = "Signal perdu..."; 
-                    speedDisplay.style.display = "none";
-                    setTimeout(connect, 4000); 
+                    document.getElementById(`speed-${id}`).innerText = data.speed || 0;
                 });
             });
-        }
-        connect();
+        });
+
+        // Bouton pour recadrer la vue sur tout le monde
+        L.Control.extend({
+            onAdd: function() {
+                const btn = L.DomUtil.create('button', 'leaflet-bar');
+                btn.innerHTML = '🔍';
+                btn.style.padding = '5px';
+                btn.onclick = () => {
+                    const group = new L.featureGroup(Object.values(fleet).map(f => f.marker));
+                    if(group.getLayers().length > 0) map.fitBounds(group.getBounds());
+                };
+                return btn;
+            },
+            position: 'topright'
+        }).addTo(map);
     </script>
 </body>
 </html>
