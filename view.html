@@ -49,15 +49,11 @@
                 conn.on('data', (data) => {
                     const pos = [data.lat, data.lon];
                     marker.setLatLng(pos);
-                    
-                    // Si l'utilisateur a désactivé le tracé, on n'ajoute pas de points
                     if (data.showTrace !== false) {
                         polyline.addLatLng(pos);
                     }
-                    
                     speedDisplay.style.display = "block";
                     speedVal.innerText = data.speed || 0;
-                    
                     if (!userInteracting) {
                         map.setView(pos, map.getZoom() < 10 ? 17 : map.getZoom());
                     }
