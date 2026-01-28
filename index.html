@@ -50,9 +50,12 @@
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <script>
         let peer = null, conn = null, timerId = null;
-        let showTrace = true;
-        let isPaused = false;
-        let map = L.map('map').setView([46.6, 2.2], 5);
+        let showTrace = true, isPaused = false;
+        
+        // Configuration du zoom en bas à droite
+        let map = L.map('map', {zoomControl: false}).setView([46.6, 2.2], 5);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+        
         let marker = L.marker([0, 0]).addTo(map);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
@@ -66,23 +69,14 @@
             const btn = document.getElementById('btnTrace');
             btn.innerText = showTrace ? "Tracé : ON" : "Tracé : OFF";
             btn.classList.toggle('trace-on', showTrace);
-
-            // Si on éteint, on envoie un signal pour effacer chez le spectateur
-            if (conn && conn.open) {
-                conn.send({ command: "clearTrace", value: showTrace });
-            }
+            if (conn && conn.open) conn.send({ command: "clearTrace", value: showTrace });
         }
 
         function togglePause() {
             isPaused = !isPaused;
             const btn = document.getElementById('btnPause');
-            if (isPaused) {
-                btn.innerText = "▶ Reprendre";
-                document.getElementById('status').innerText = "⏸ En pause...";
-            } else {
-                btn.innerText = "⏸ Pause";
-                document.getElementById('status').innerText = "📡 Envoi en cours...";
-            }
+            btn.innerText = isPaused ? "▶ Reprendre" : "⏸ Pause";
+            document.getElementById('status').innerText = isPaused ? "⏸ En pause..." : "📡 Envoi en cours...";
         }
 
         function generateLink() {
@@ -93,7 +87,7 @@
             peer = new Peer(name);
             peer.on('open', (id) => {
                 const basePath = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
-                const shareUrl = window.location.origin + basePath + "view.html?id=" + id;
+                const shareUrl = window.location.origin + basePath + "view.html?ids=" + id;
                 document.getElementById('link').innerText = shareUrl;
                 document.getElementById('link').href = shareUrl;
                 document.getElementById('linkBox').style.display = "block";
@@ -110,7 +104,6 @@
             if (timerId) return;
             document.getElementById('btnPause').style.display = "block";
             document.getElementById('btnStart').style.display = "none";
-            
             timerId = setInterval(() => {
                 if (isPaused) return;
                 navigator.geolocation.getCurrentPosition(pos => {
@@ -119,12 +112,8 @@
                     document.getElementById('speed').innerText = kmh;
                     marker.setLatLng([lat, lon]);
                     map.setView([lat, lon], 15);
-                    
                     if (conn && conn.open) {
-                        conn.send({ 
-                            lat, lon, speed: kmh, time: Date.now(),
-                            showTrace: showTrace 
-                        });
+                        conn.send({ lat, lon, speed: kmh, time: Date.now(), showTrace: showTrace });
                     }
                 }, null, { enableHighAccuracy: true });
             }, 2000);
