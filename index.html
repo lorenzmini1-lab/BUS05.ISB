@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>📍 Partager sa position (P2P) 📍</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <style>
+        body{background:#111;color:#fff;font-family:sans-serif;text-align:center;padding:15px}
+        button{padding:12px;margin:8px auto;font-size:15px;border-radius:8px;border:none;cursor:pointer;font-weight:bold;width:85%;max-width:300px;display:block;transition: 0.3s}
+        input{padding:12px; border-radius:8px; border:1px solid #444; background:#222; color:#fff; width:80%; max-width:280px; margin-bottom:10px; text-align:center}
+        .gen{background:#4da6ff;color:#fff}
+        .share{background:#6f42c1;color:#fff}
+        .start{background:#28a745;color:#fff}
+        .stop{background:#dc3545;color:#fff}
+        .toggle-trace{background:#555;color:#fff}
+        .trace-on{background:#007bff;box-shadow: 0 0 10px #007bff}
+        #map{height:220px;width:100%;border-radius:12px;margin-top:10px;border:2px solid #333}
+        .box{background:#222;padding:15px;border-radius:12px;margin-top:15px;border:1px dashed #444}
+        #status{margin-bottom:10px; font-size:14px; color:#aaa}
+        #speedBox{font-size:24px; font-weight:bold; color:#4da6ff; margin:10px 0}
+        a{color:#4da6ff;word-break:break-all;text-decoration:none;display:block;margin-top:10px;font-size:13px}
+    </style>
+</head>
+<body>
+    <h2>📍 Ma Position 📍</h2>
+    <div id="status">Prêt</div>
+    <div id="speedBox"><span id="speed">0</span> km/h</div>
+    
+    <input type="text" id="customId" placeholder="Nom de session">
+    
+    <button class="gen" onclick="generateLink()">🔗 1. Créer Session</button>
+    
+    <div id="controls" style="display:none;">
+        <button class="share" onclick="shareLink()">📤 2. Partager</button>
+        <button class="start" id="btnStart" onclick="startTracking()">▶ 3. Démarrer le direct</button>
+        <button class="toggle-trace trace-on" id="btnTrace" onclick="toggleTrace()">Tracé : ON</button>
+    </div>
+    
+    <button class="stop" onclick="stopSession()">⏹ ARRÊTER / RESET</button>
+
+    <div id="map"></div>
+    <div class="box" id="linkBox" style="display:none">
+        <a id="link" target="_blank"></a>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script>
+        let peer = null, conn = null, timerId = null;
+        let showTrace = true;
+        let map = L.map('map').setView([46.6, 2.2], 5);
+        let marker = L.marker([0, 0]).addTo(map);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        window.onload = () => {
+            const saved = localStorage.getItem('p2p_session_name');
+            if (saved) document.getElementById('customId').value = saved;
+        };
+
+        function toggleTrace() {
+            showTrace = !showTrace;
+            const btn = document.getElementById('btnTrace');
+            btn.innerText = showTrace ? "Tracé : ON" : "Tracé : OFF";
+            btn.classList.toggle('trace-on', showTrace);
+        }
+
+        function generateLink() {
+            const name = document.getElementById('customId').value.trim();
+            if (!name) return alert("Choisis un nom !");
+            
+            localStorage.setItem('p2p_session_name', name);
+            if(peer) peer.destroy(); // On nettoie si une session existe déjà
+            
+            peer = new Peer(name);
+
+            peer.on('open', (id) => {
+                const basePath = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
+                const shareUrl = window.location.origin + basePath + "view.html?id=" + id;
+                
+                document.getElementById('link').innerText = shareUrl;
+                document.getElementById('link').href = shareUrl;
+                document.getElementById('linkBox').style.display = "block";
+                
+                // On affiche tout le bloc de contrôle d'un coup
+                document.getElementById('controls').style.display = "block";
+                document.getElementById('status').innerText = "Session '" + id + "' active.";
+            });
+
+            peer.on('connection', (c) => { 
+                conn = c; 
+                document.getElementById('status').innerText = "Quelqu'un regarde !"; 
+            });
+
+            peer.on('error', (err) => {
+                if (err.type === 'unavailable-id') alert("Ce nom est déjà pris.");
+                console.error(err);
+            });
+        }
+
+        function startTracking() {
+            if (timerId) return;
+            timerId = setInterval(() => {
+                navigator.geolocation.getCurrentPosition(pos => {
+                    const { latitude: lat, longitude: lon, speed } = pos.coords;
+                    const kmh = speed ? Math.round(speed * 3.6) : 0;
+                    document.getElementById('speed').innerText = kmh;
+                    marker.setLatLng([lat, lon]);
+                    map.setView([lat, lon], 15);
+                    
+                    if (conn && conn.open) {
+                        conn.send({ 
+                            lat, lon, speed: kmh, time: Date.now(),
+                            showTrace: showTrace 
+                        });
+                    }
+                }, null, { enableHighAccuracy: true });
+            }, 2000);
+            document.getElementById('status').innerText = "📡 Envoi en cours...";
+            document.getElementById('btnStart').style.opacity = "0.5";
+            document.getElementById('btnStart').innerText = "DIRECT ACTIF";
+        }
+
+        function stopSession() {
+            localStorage.removeItem('p2p_session_name');
+            location.reload();
+        }
+
+        async function shareLink() {
+            const link = document.getElementById("link").href;
+            if (navigator.share) {
+                await navigator.share({ title: 'Suis-moi en direct', url: link });
+            } else {
+                alert("Lien : " + link);
+            }
+        }
+    </script>
+</body>
+</html>
