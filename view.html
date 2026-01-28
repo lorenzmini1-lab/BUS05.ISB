@@ -49,9 +49,12 @@
                 conn.on('data', (data) => {
                     const pos = [data.lat, data.lon];
                     marker.setLatLng(pos);
-                    polyline.addLatLng(pos);
                     
-                    // Affichage vitesse
+                    // On n'ajoute au tracé que si l'expéditeur l'a activé
+                    if (data.showTrace !== false) {
+                        polyline.addLatLng(pos);
+                    }
+                    
                     speedDisplay.style.display = "block";
                     speedVal.innerText = data.speed || 0;
                     
