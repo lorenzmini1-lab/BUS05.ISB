@@ -8,14 +8,59 @@
     <style>
         body{margin:0;padding:0;background:#111;font-family:sans-serif}
         #map{height:100vh;width:100%}
-        .legend{position:fixed;top:10px;left:10px;z-index:1000;background:rgba(0,0,0,0.85);color:#fff;padding:12px;border-radius:8px;font-size:12px;border:1px solid #4da6ff;max-height:200px;overflow-y:auto;pointer-events: auto;}
-        .bus-item{margin-bottom:8px;display:flex;align-items:center}
+        
+        /* Légende et liste des bus */
+        .legend{position:fixed;top:10px;left:10px;z-index:1000;background:rgba(0,0,0,0.85);color:#fff;padding:12px;border-radius:8px;font-size:12px;border:1px solid #4da6ff;max-height:300px;overflow-y:auto;pointer-events: auto;}
+        .bus-item{margin-bottom:8px;display:flex;align-items:center;cursor:pointer;padding:5px;border-radius:4px;transition:0.2s}
+        .bus-item:hover{background:rgba(255,255,255,0.1)}
+        .bus-item.offline { opacity: 0.5; filter: grayscale(1); }
+        
         .color-dot{width:12px;height:12px;border-radius:50%;margin-right:8px;border:1px solid #fff}
         .speed-text{color:#4da6ff; font-weight:bold; margin-left:5px}
+        .status-dot { font-size: 10px; margin-left: 8px; font-weight: normal; }
+        .online { color: #28a745; }
+        .offline-text { color: #dc3545; }
+
+        /* Contrôles en haut à droite */
+        .search-container {
+            position: fixed;
+            top: 10px;
+            right: 50px;
+            z-index: 1001;
+            display: flex;
+            gap: 5px;
+        }
+        .search-input {
+            padding: 8px;
+            border-radius: 5px;
+            border: 1px solid #4da6ff;
+            background: #222;
+            color: #fff;
+            width: 120px;
+            outline: none;
+        }
+        .search-btn, .add-btn {
+            background: #4da6ff;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .add-btn { background: #28a745; }
     </style>
 </head>
 <body>
+
     <div class="legend" id="legend"><b>🚌 Flotte en direct</b><hr></div>
+
+    <div class="search-container">
+        <input type="text" id="searchInput" class="search-input" placeholder="Nom du bus...">
+        <button class="search-btn" onclick="focusBus()" title="Chercher">🔍</button>
+        <button class="add-btn" onclick="addBusManual()" title="Ajouter un bus">+</button>
+    </div>
+
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -23,69 +68,131 @@
     <script>
         const params = new URLSearchParams(window.location.search);
         const rawIds = params.get("ids") || params.get("id");
-        const hostIds = rawIds ? rawIds.split(',') : [];
+        let hostIds = rawIds ? rawIds.split(',') : [];
         
-        // Zoom déplacé en bas à droite
         let map = L.map('map', {zoomControl: false}).setView([46.6, 2.2], 5);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
-        
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
         const fleet = {};
         const colors = ['#00FFFF', '#00FF00', '#FFFF00', '#FF8000', '#FF00FF', '#FF0000'];
-
-        function createBusUI(id, color) {
-            const div = document.createElement('div');
-            div.className = 'bus-item';
-            div.innerHTML = `<div class="color-dot" style="background:${color}"></div> <span>${id}: </span><span class="speed-text"><span id="speed-${id}">0</span> km/h</span>`;
-            return div;
-        }
+        let colorIndex = 0;
 
         const peer = new Peer();
 
         peer.on('open', () => {
-            hostIds.forEach((id, index) => {
-                const busId = id.trim();
-                const color = colors[index % colors.length];
-                
-                fleet[busId] = {
-                    marker: L.marker([0, 0]).addTo(map).bindPopup("<b>Bus: " + busId + "</b>"),
-                    polyline: L.polyline([], {color: color, weight: 4, opacity: 0.8}).addTo(map),
-                    conn: peer.connect(busId)
-                };
-
-                document.getElementById('legend').appendChild(createBusUI(busId, color));
-
-                fleet[busId].conn.on('data', (data) => {
-                    if (data.command === "clearTrace") {
-                        fleet[busId].polyline.setLatLngs([]);
-                        return;
-                    }
-
-                    const pos = [data.lat, data.lon];
-                    fleet[busId].marker.setLatLng(pos);
-                    
-                    if (data.showTrace !== false) {
-                        fleet[busId].polyline.addLatLng(pos);
-                    } else {
-                        fleet[busId].polyline.setLatLngs([]);
-                    }
-                    
-                    const speedEl = document.getElementById(`speed-${busId}`);
-                    if (speedEl) speedEl.innerText = data.speed || 0;
-                });
-                
-                fleet[busId].conn.on('close', () => {
-                    console.log("Connexion perdue avec " + busId);
-                });
+            hostIds.forEach(id => {
+                if(id.trim() !== "") connectToBus(id.trim(), false);
             });
         });
 
-        // Bouton loupe pour voir tout le monde
+        function connectToBus(busId, updateUrl = true) {
+            if (fleet[busId]) return;
+
+            const color = colors[colorIndex % colors.length];
+            colorIndex++;
+
+            fleet[busId] = {
+                marker: L.marker([0, 0]).addTo(map).bindPopup("<b>Bus: " + busId + "</b>"),
+                polyline: L.polyline([], {color: color, weight: 4, opacity: 0.8}).addTo(map),
+                conn: peer.connect(busId)
+            };
+
+            // Mise à jour de l'URL sans rechargement
+            if (updateUrl) {
+                const url = new URL(window.location);
+                let currentIds = url.searchParams.get("ids") ? url.searchParams.get("ids").split(',') : [];
+                if (!currentIds.includes(busId)) {
+                    currentIds.push(busId);
+                    url.searchParams.set("ids", currentIds.join(','));
+                    window.history.pushState({}, '', url);
+                }
+            }
+
+            document.getElementById('legend').appendChild(createBusUI(busId, color));
+
+            // Gestion de la réception des données
+            fleet[busId].conn.on('data', (data) => {
+                marquerEnLigne(busId);
+                
+                if (data.command === "clearTrace") {
+                    fleet[busId].polyline.setLatLngs([]);
+                    return;
+                }
+                const pos = [data.lat, data.lon];
+                fleet[busId].marker.setLatLng(pos);
+                if (data.showTrace !== false) {
+                    fleet[busId].polyline.addLatLng(pos);
+                } else {
+                    fleet[busId].polyline.setLatLngs([]);
+                }
+                const speedEl = document.getElementById(`speed-${busId}`);
+                if (speedEl) speedEl.innerText = data.speed || 0;
+            });
+
+            // Gestion de la déconnexion
+            fleet[busId].conn.on('close', () => marquerHorsLigne(busId));
+            fleet[busId].conn.on('error', () => marquerHorsLigne(busId));
+        }
+
+        function createBusUI(id, color) {
+            const div = document.createElement('div');
+            div.className = 'bus-item';
+            div.id = `item-${id}`;
+            div.onclick = () => focusBus(id);
+            div.innerHTML = `
+                <div class="color-dot" style="background:${color}"></div> 
+                <span>${id}</span>
+                <span class="speed-text"><span id="speed-${id}">0</span> km/h</span>
+                <span id="status-${id}" class="status-dot online">●</span>
+            `;
+            return div;
+        }
+
+        function marquerHorsLigne(id) {
+            const el = document.getElementById(`item-${id}`);
+            if (el) {
+                el.classList.add('offline');
+                const status = document.getElementById(`status-${id}`);
+                status.className = "status-dot offline-text";
+                status.title = "Hors-ligne";
+            }
+        }
+
+        function marquerEnLigne(id) {
+            const el = document.getElementById(`item-${id}`);
+            if (el) {
+                el.classList.remove('offline');
+                const status = document.getElementById(`status-${id}`);
+                status.className = "status-dot online";
+                status.title = "En direct";
+            }
+        }
+
+        function addBusManual() {
+            const newId = prompt("ID du bus à ajouter :");
+            if (newId && newId.trim() !== "") connectToBus(newId.trim(), true);
+        }
+
+        function focusBus(forcedId = null) {
+            const name = forcedId || document.getElementById('searchInput').value.trim();
+            if (fleet[name]) {
+                const marker = fleet[name].marker;
+                const pos = marker.getLatLng();
+                if (pos.lat !== 0) {
+                    map.setView(pos, 16);
+                    marker.openPopup();
+                } else {
+                    alert("Pas de position pour " + name);
+                }
+            }
+        }
+
+        // Loupe globale
         L.Control.extend({
             onAdd: function() {
                 const btn = L.DomUtil.create('button', 'leaflet-bar');
-                btn.innerHTML = '🔍';
+                btn.innerHTML = '🌐';
                 btn.style.cssText = 'background:#fff; width:34px; height:34px; cursor:pointer; font-size:18px;';
                 btn.onclick = () => {
                     const layers = Object.values(fleet).map(f => f.marker).filter(m => m.getLatLng().lat !== 0);
