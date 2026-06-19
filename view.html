@@ -86,6 +86,18 @@
             });
         });
 
+        // Gestion globale des erreurs PeerJS (ex: si l'ID cible n'existe pas)
+        peer.on('error', (err) => {
+            console.error("Erreur PeerJS:", err);
+            if (err.type === 'peer-not-found' || err.type === 'connection') {
+                const parts = err.message.split(' ');
+                const failedId = parts[parts.length - 1]; 
+                if (fleet[failedId]) {
+                    marquerHorsLigne(failedId);
+                }
+            }
+        });
+
         function connectToBus(busId, updateUrl = true) {
             if (fleet[busId]) return;
 
@@ -98,7 +110,6 @@
                 conn: peer.connect(busId)
             };
 
-            // Mise à jour de l'URL sans rechargement
             if (updateUrl) {
                 const url = new URL(window.location);
                 let currentIds = url.searchParams.get("ids") ? url.searchParams.get("ids").split(',') : [];
@@ -111,7 +122,6 @@
 
             document.getElementById('legend').appendChild(createBusUI(busId, color));
 
-            // Gestion de la réception des données
             fleet[busId].conn.on('data', (data) => {
                 marquerEnLigne(busId);
                 
@@ -130,7 +140,6 @@
                 if (speedEl) speedEl.innerText = data.speed || 0;
             });
 
-            // Gestion de la déconnexion
             fleet[busId].conn.on('close', () => marquerHorsLigne(busId));
             fleet[busId].conn.on('error', () => marquerHorsLigne(busId));
         }
@@ -188,12 +197,14 @@
             }
         }
 
-        // Loupe globale
-        L.Control.extend({
+        const GlobalBoundsControl = L.Control.extend({
+            options: { position: 'topright' },
             onAdd: function() {
-                const btn = L.DomUtil.create('button', 'leaflet-bar');
+                const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+                const btn = L.DomUtil.create('button', '', container);
                 btn.innerHTML = '🌐';
-                btn.style.cssText = 'background:#fff; width:34px; height:34px; cursor:pointer; font-size:18px;';
+                btn.style.cssText = 'background:#fff; width:34px; height:34px; cursor:pointer; font-size:18px; border:none; display:flex; align-items:center; justify-content:center;';
+                btn.title = "Voir tous les bus";
                 btn.onclick = () => {
                     const layers = Object.values(fleet).map(f => f.marker).filter(m => m.getLatLng().lat !== 0);
                     if(layers.length > 0) {
@@ -201,10 +212,10 @@
                         map.fitBounds(group.getBounds(), {padding: [50, 50]});
                     }
                 };
-                return btn;
-            },
-            position: 'topright'
-        }).addTo(map);
+                return container;
+            }
+        });
+        map.addControl(new GlobalBoundsControl());
     </script>
 </body>
 </html>
