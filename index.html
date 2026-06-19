@@ -49,10 +49,10 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <script>
-        let peer = null, conn = null, timerId = null;
+        let peer = null, timerId = null;
+        let connections = []; 
         let showTrace = true, isPaused = false;
         
-        // Configuration du zoom en bas à droite
         let map = L.map('map', {zoomControl: false}).setView([46.6, 2.2], 5);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
         
@@ -64,39 +64,77 @@
             if (saved) document.getElementById('customId').value = saved;
         };
 
+        function broadcast(data) {
+            connections = connections.filter(c => {
+                if (c.open) {
+                    c.send(data);
+                    return true;
+                }
+                return false;
+            });
+            updateStatusText();
+        }
+
+        function updateStatusText() {
+            if (isPaused) {
+                document.getElementById('status').innerText = "⏸ En pause...";
+            } else if (connections.length > 0) {
+                document.getElementById('status').innerText = `📡 Envoi en cours (${connections.length} connecté(s))`;
+            } else if (peer && !peer.destroyed) {
+                document.getElementById('status').innerText = "Session active. En attente de spectateurs...";
+            }
+        }
+
         function toggleTrace() {
             showTrace = !showTrace;
             const btn = document.getElementById('btnTrace');
             btn.innerText = showTrace ? "Tracé : ON" : "Tracé : OFF";
             btn.classList.toggle('trace-on', showTrace);
-            if (conn && conn.open) conn.send({ command: "clearTrace", value: showTrace });
+            broadcast({ command: "clearTrace", value: showTrace });
         }
 
         function togglePause() {
             isPaused = !isPaused;
             const btn = document.getElementById('btnPause');
             btn.innerText = isPaused ? "▶ Reprendre" : "⏸ Pause";
-            document.getElementById('status').innerText = isPaused ? "⏸ En pause..." : "📡 Envoi en cours...";
+            updateStatusText();
         }
 
         function generateLink() {
             const name = document.getElementById('customId').value.trim();
             if (!name) return alert("Choisis un nom !");
             localStorage.setItem('p2p_session_name', name);
+            
             if(peer) peer.destroy();
+            
             peer = new Peer(name);
+            
             peer.on('open', (id) => {
                 const basePath = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
+                // Le lien pointe vers view.html
                 const shareUrl = window.location.origin + basePath + "view.html?ids=" + id;
                 document.getElementById('link').innerText = shareUrl;
                 document.getElementById('link').href = shareUrl;
                 document.getElementById('linkBox').style.display = "block";
                 document.getElementById('controls').style.display = "block";
-                document.getElementById('status').innerText = "Session '" + id + "' active.";
+                updateStatusText();
             });
+
             peer.on('connection', (c) => { 
-                conn = c; 
-                document.getElementById('status').innerText = "Quelqu'un regarde !"; 
+                connections.push(c);
+                updateStatusText();
+                
+                c.on('close', () => {
+                    connections = connections.filter(conn => conn !== c);
+                    updateStatusText();
+                });
+            });
+
+            peer.on('error', (err) => {
+                console.error("Erreur PeerJS:", err);
+                if (err.type === 'unavailable-id') {
+                    alert("Cet ID de session est déjà utilisé. Choisi un autre nom.");
+                }
             });
         }
 
@@ -104,30 +142,47 @@
             if (timerId) return;
             document.getElementById('btnPause').style.display = "block";
             document.getElementById('btnStart').style.display = "none";
+            
             timerId = setInterval(() => {
                 if (isPaused) return;
+                
                 navigator.geolocation.getCurrentPosition(pos => {
                     const { latitude: lat, longitude: lon, speed } = pos.coords;
                     const kmh = speed ? Math.round(speed * 3.6) : 0;
+                    
                     document.getElementById('speed').innerText = kmh;
                     marker.setLatLng([lat, lon]);
                     map.setView([lat, lon], 15);
-                    if (conn && conn.open) {
-                        conn.send({ lat, lon, speed: kmh, time: Date.now(), showTrace: showTrace });
-                    }
-                }, null, { enableHighAccuracy: true });
+                    
+                    broadcast({ lat, lon, speed: kmh, time: Date.now(), showTrace: showTrace });
+                }, (err) => {
+                    console.warn("Erreur GPS / Géolocalisation :", err.message);
+                }, { enableHighAccuracy: true });
             }, 2000);
-            document.getElementById('status').innerText = "📡 Envoi en cours...";
+            
+            updateStatusText();
         }
 
         function stopSession() {
             localStorage.removeItem('p2p_session_name');
+            if (timerId) clearInterval(timerId);
+            connections.forEach(c => c.close());
+            if (peer) peer.destroy();
             location.reload();
         }
 
         async function shareLink() {
             const link = document.getElementById("link").href;
-            if (navigator.share) await navigator.share({ title: 'Suis-moi', url: link });
+            if (navigator.share) {
+                try {
+                    await navigator.share({ title: 'Suis-moi en direct', url: link });
+                } catch (err) {
+                    console.log("Partage annulé", err);
+                }
+            } else {
+                navigator.clipboard.writeText(link);
+                alert("Lien copié dans le presse-papier !");
+            }
         }
     </script>
 </body>
